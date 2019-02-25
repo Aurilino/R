@@ -1,0 +1,227 @@
+---
+title: "Pref&Stock Strategy additionally"
+author: "Valery Andruynichev"
+date: '25 февраля 2019 г '
+output: html_document
+---
+
+# Strategy with use of a spread between ordinary shares and preferred shares same company.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Unlike the previous strategy, we will use the excess growth stocks over the deviation of the spread between obinim and privileged shares..
+
+## Chosen Sberbank company for analysis.
+
+### Set the working directory.
+```{r}
+setwd("D:/GH/Pref and Stock")
+```
+
+### Connect the necessary packages.
+```{r, warning=FALSE, message=FALSE}
+library(rusquant) # Download data from "Finam" source
+library(ggplot2) # Plots
+library(zoo) # Time series
+library(dplyr) # Manipulate data
+library(formattable) # Correct data
+```
+
+### Download and correcting data.
+```{r, warning=FALSE, message=FALSE}
+getSymbols(c('SBER','SBERP'),src='Finam',period='1min',from='2018-08-16',to='2018-08-16')
+
+A<-merge(SBER$SBER.Close, SBERP$SBERP.Close);colnames(A)<-c('Stock','Pref') 
+df<-data.frame(date = index(A),Stock=A$Stock,Pref=A$Pref,row.names=NULL)
+df$Pref<-na.locf(df$Pref)
+
+df$Stock_incom <- c(0, diff(log(df$Stock),lag=1))
+df$Pref_incom <- c(0, diff(log(df$Pref),lag=1))
+```
+#### Let's see on result
+```{r}
+ggplot(df, aes(x = df$date))+
+  geom_line(aes(y = df$Stock_incom, colour = 'Stock'))+
+  geom_line(aes(y = df$Pref_incom, colour = 'Pref'))
+```
+
+### Backtest the strategy.
+```{r}
+df$Spread<-df$Stock-df$Pref 
+
+df$Incom_spread<-df$Stock_incom-df$Pref_incom ## Спред доходностей
+df<-na.omit(df)
+
+write.csv(df, 'main_data.csv')
+df$Pos_s <- 0
+df$Pos_p <- 0
+df$Res <- 0
+
+for(i in 20:nrow(df)){
+  temp <- df[c((i-19):i),]
+  sigma <- sd(temp$Incom_spread)
+  mu <- mean(temp$Incom_spread)
+  if(df$Stock_incom[i] >= mu + sigma){
+    df$Pos_s[i] <- df$Stock[i]
+    df$Pos_p[i] <- -df$Pref[i]
+  } else if(df$Pref_incom[i] <= mu - sigma){
+    df$Pos_s[i] <- -df$Stock[i]
+    df$Pos_p[i] <- df$Pref[i]
+  } else {
+    df$Pos_s[i] <- 0
+    df$Pos_p[i] <- 0
+  }
+}
+df$Res <- df$Pos_s + df$Pos_p
+df <- df[-c(1:20),]
+df$Sum <- 0
+for(i in 2:nrow(df)){
+  df$Sum[i] = df$Sum[i-1] + df$Res[i]
+}
+```
+
+### Let's see strategy result.
+```{r}
+par(mar=c(4, 4, 4, 4) + 0.1)
+plot(df$Stock, type = 'l', col = 'red', axes = FALSE, 
+     main = '', xlab = "", ylab = "", 
+     ylim = c(min(df$Pref), max(df$Stock)))
+lines(df$Pref, col = 'blue')
+axis(2, ylim = c(min(df$Pref), max(df$Stock)), col = "black", col.axis = 'black', las = 1)
+mtext("Price(Stock&Pref), rub", side = 2, col = "black", line = 3.2)
+par(new = TRUE)
+plot(df$Sum, type = 'l', col = 'green', axes = FALSE, xlab="", ylab="")
+axis(4, ylim = c(min(df$Sum), max((df$Sum))), col = "green", col.axis = "green", las = 1)
+mtext("Spread strategy result, rub", side = 4, col = "green", line = 3.2)
+axis(1, pretty(index(df)))
+mtext("Days", side = 1, col = "black", line = 2)
+legend(x = -10, y = 1100, c("Stock","Pref", 'Strategy Result'), cex=.8, col = c("red", "blue", "green"), 
+       lty = c(1, 1), box.lty=0,inset=c(0,1), xpd=TRUE, horiz=TRUE)
+```
+
+### add the commission fee into the strategy.
+```{r}
+commision <- c(seq(0, 0.01, by = .0005))
+cor_data <- character()
+for(j in commision){
+  com <- read.csv('main_data.csv')
+  com$Pos_s <- 0
+  com$Pos_p <- 0
+  com$Res <- 0
+    for(i in 20:nrow(com)){
+      temp <- com[c((i-19):i),]
+      sigma <- sd(temp$Incom_spread)
+      mu <- mean(temp$Incom_spread)
+      if(com$Stock_incom[i] >= mu + sigma){
+        com$Pos_s[i] <- com$Stock[i] / (1 + j)
+        com$Pos_p[i] <- -com$Pref[i] * (1 + j)
+      } else if(com$Pref_incom[i] <= mu - sigma){
+        com$Pos_s[i] <- -com$Stock[i] * (1 + j)
+        com$Pos_p[i] <- com$Pref[i] / (1 + j)
+      } else {
+        com$Pos_s[i] <- 0
+        com$Pos_p[i] <- 0
+      }
+    }
+  com$Res <- com$Pos_s + com$Pos_p
+  com <- com[-c(1:20),]
+  com$Sum <- 0
+  for(i in 2:nrow(com)){
+    com$Sum[i] = com$Sum[i-1] + com$Res[i]
+  }
+  cor_data <- c(cor_data, com$Sum[nrow(com)])
+}
+cor_data <- as.numeric(cor_data)
+comm <- data.frame('Result' = c(cor_data), 'Commision' = c(commision))
+comm$Commision <- percent(comm$Commision * 100)
+```
+
+### Let's see how the result of the strategy changes depending on the changes in the сommission.
+```{r}
+ggplot(comm, aes(x = Commision, y = Result))+
+  labs(x = 'Commision, %', 
+       y = 'Strategy result, rub', 
+       title = 'the dependence of the result of the strategy of the Commission')+
+  geom_line()
+```
+
+
+### Let's look at the real data obtained from QUIK.
+```{r}
+rm(list=ls())
+real_data <- read.csv('export_head_log.txt')
+colnames(real_data) <- c('Date_Time', 
+                         'Sec_Stock', 
+                         'Offer', 
+                         'Bid', 
+                         'Last', 
+                         'Sec_Pref', 
+                         'OfferP', 
+                         'BidP',
+                         'LastP')
+real_data$Date_Time <- as.character(real_data$Date_Time)
+real_data$Date_Time <- as.POSIXct(real_data$Date_Time, format = '%d.%m.%Y %H:%M:%S')
+real_data$Sec_Stock <- as.character(real_data$Sec_Stock)
+real_data$Sec_Pref <- as.character(real_data$Sec_Pref)
+df <- data.frame('Date' = real_data$Date_Time, 
+                 'SB_Ask' = real_data$Offer,
+                 'SB_Bid' = real_data$Bid,
+                 'SB_Last' = real_data$Last,
+                 'SBP_Ask' = real_data$OfferP,
+                 'SBP_Bid' = real_data$BidP,
+                 'SBP_Last' = real_data$LastP)
+
+df$Spread <- df$SB_Last - df$SBP_Last
+df$SB_Inc <- c(0, diff(log(df$SB_Last), lag = 1))
+df$SBP_Inc <- c(0, diff(log(df$SBP_Last), lag = 1))
+df$Inc_spread <- df$SB_Inc - df$SBP_Inc
+write.csv(df, 'real_data')
+df$Pos_s <- 0
+df$Pos_p <- 0
+df$Res <- 0
+
+for(i in 20:nrow(df)){
+  temp <- df[c((i-19):i),]
+  sigma <- sd(temp$Inc_spread)
+  mu <- mean(temp$Inc_spread)
+  if(df$SB_Inc[i] >= mu + sigma){
+    df$Pos_s[i] <- df$SB_Bid[i]
+    df$Pos_p[i] <- -df$SBP_Ask[i]
+  } else if(df$SBP_Inc[i] <= mu - sigma){
+    df$Pos_s[i] <- -df$SB_Ask[i]
+    df$Pos_p[i] <- df$SBP_Bid[i]
+  } else {
+    df$Pos_s[i] <- 0
+    df$Pos_p[i] <- 0
+  }
+}
+df$Res <- df$Pos_s + df$Pos_p
+df <- df[-c(1:20),]
+df$Sum <- 0
+for(i in 2:nrow(df)){
+  df$Sum[i] = df$Sum[i-1] + df$Res[i]
+}
+
+par(mar=c(4, 4, 4, 4) + 0.1)
+plot(df$SB_Last, type = 'l', col = 'red', axes = FALSE, 
+     main = '', xlab = "", ylab = "", 
+     ylim = c(min(df$SBP_Last), max(df$SB_Last)))
+lines(df$SBP_Last, col = 'blue')
+axis(2, ylim = c(min(df$Pref), max(df$Stock)), col = "black", col.axis = 'black', las = 1)
+mtext("Price(Stock&Pref), rub", side = 2, col = "black", line = 2.8)
+par(new = TRUE)
+plot(df$Sum, type = 'l', col = 'green', axes = FALSE, xlab="", ylab="")
+axis(4, ylim = c(min(df$Sum), max((df$Sum))), col = "green", col.axis = "green", las = 1)
+mtext("Spread strategy result, rub", side = 4, col = "green", line = 2.8)
+axis(1, pretty(index(df)))
+mtext("10 sec", side = 1, col = "black", line = 2)
+legend(x = -10, y = 1200, c("Stock","Pref", 'Strategy Result'), cex=.8, col = c("red", "blue", "green"), 
+       lty = c(1, 1), box.lty=0,inset=c(0,1), xpd=TRUE, horiz=TRUE)
+
+```
+
+
+# Summary:
+### The strategy with the use of profitability showed a much better result.
+
+
