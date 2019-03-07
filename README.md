@@ -2,7 +2,8 @@
 
 ==========================================================
 
-This section presents my work in the environment R. 
+This section presents my work in the environment R.
+
 Work associated with learning and personal research. 
 
 ==========================================================
