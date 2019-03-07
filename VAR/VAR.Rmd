@@ -1,0 +1,302 @@
+---
+title: "VAR"
+author: "Valery Andruynichev"
+date: '11 may 2018 year'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE)
+```
+
+
+## Введение
+
+### В данном задание идет расчет Var с данными, которые получены из внешних источников 
+
+## 1.Подключение необходимых пакетов
+### Загрузка библиотек
+
+```{r,message=FALSE,warning=FALSE}
+library(quantmod)# загрузка данных из внешних источников
+library(rugarch) #бэктэстинг VAR
+library(fBasics)# расчет различных  характеристик ряда распределения  
+library(ggplot2)# графический пакет
+library(reshape2)# преобразование форматов
+library(nortest)# тесты на нормальность распределения
+library(fGarch)# содержится стандартизированный Стьюдент
+library(zoo)# чтение и запись zoo/xts объектов в текстовый файл
+```
+
+## 2.Загрузка и подготовка данных
+## 2.1.1 Составление списка данных для загрузки
+### Данные для загрузки:
+#### CL=F - Фьючерс на неть
+#### ZW=F - Фьючерс на зерно
+#### GC=F - Фьючерс на золото
+#### HG=F - Фьючерс на медь
+
+#### Источником данных является yahoo
+
+## 2.1.2 Загрузка данных
+
+Выгрузим необходимые данные из yahoo
+```{r,warning=FALSE,message=FALSE} 
+flag=0 # флаг загрузки из интернета
+b<-c('CL=F','GC=F','HG=F','ZW=F')
+getSymbols(b,src = "yahoo",from='2018-01-01')
+```
+
+```{r}
+a<-c("oil","wheat","gold","copper")
+oil<-c(`CL=F`)
+wheat<-c(`ZW=F`)
+gold<-c(`GC=F`)
+copper<-c(`HG=F`)
+oil<-na.locf(oil)
+wheat<-na.locf(wheat)
+gold<-na.locf(gold)
+copper<-na.locf(copper)
+rm(`CL=F`,`GC=F`,`HG=F`,`ZW=F`)
+```
+
+## 2.2 Расчет логарифмов дневных доходностей
+
+Расчитаем логорифлы уточненых доходностей
+```{r,message=FALSE,warning=FALSE}
+if (flag==0)
+{
+tk_l<-lapply(c(1:length(a)),function (x) 
+  {periodReturn(get(a[x])[,6],period='daily',type='log')} )
+df<-Reduce(function(x,y) merge(x,y),tk_l)[-1,]
+colnames(df)<-a
+} 
+df<-na.omit(df)
+head(df)
+tail(df)
+```
+
+## 3.Исследование характеристик рядов распределения активов
+
+Оcновные характеристики 
+```{r}
+basicStats(coredata(df))
+```
+
+Доходность(ср.знач) у активов не значительное. Самый большая асимметрия наблдается у зерна пшеницы(wheat). 
+
+Процентные точки распределения (исторический VAR)
+
+```{r}
+sapply(df, function(x) quantile(coredata(x),c(0.001,.01,.05,0.1)))
+```
+по этим точка мы видим, что с 10% вероятностью на потери не превысят 1,4% у нефти, 2,3% у зерна 0,7% у золота и 1,1% у меди.
+
+Построим график доходности 
+```{r}
+ggplot(data=df,aes(x=index(df),y=coredata(oil)))+geom_line(color='red')+xlab('time')+
+  ylab('oil')+ggtitle('Oil time setries')
+ggplot(data=df,aes(x=index(df),y=coredata(wheat)))+geom_line(color='black')+xlab('time')+
+  ylab('wheat')+ggtitle('wheat time setries')
+ggplot(data=df,aes(x=index(df),y=coredata(gold)))+geom_line(color='blue')+xlab('time')+
+  ylab('gold')+ggtitle('Gold time setries')
+ggplot(data=df,aes(x=index(df),y=coredata(copper)))+geom_line(color='green')+xlab('time')+
+  ylab('copper')+ggtitle('Copper time setries')
+```
+
+На этих графиках мы наглядно види, что самая большая доходноть, как и риск у Нефти. У зерна виден большой скачек в начале и потом затухание.
+
+
+Проведем тест Шапиро-Вилка для проверки нормальности распределения активов. 
+
+```{r}
+sapply(df, function(x) shapiro.test(coredata(x)))
+
+```
+
+Значения p.value у трех(oil,gold,copper) товарных фьючерсов выше 5% следовательно гипотезу о соответсвии распределения активов нормальному распределению не отвергается. У зерна(wheat) p-value ниже 5% следовательно гипотеза о соответсвии нормальному распределению отвергается
+
+Самое большое значение p-value у меди(copper)
+
+Построим гистограммы распределения
+```{r}
+hist(coredata(df$oil),main = "Oil",xlab = "")
+hist(coredata(df$oil),main = "Wheat",xlab = "")
+hist(coredata(df$gold),main="Gold",xlab = "")
+hist(coredata(df$copper),main="Copper",xlab = "")
+```
+
+На данных гистограммых видна похожесть распределений доходностей активов на нормальное рапределени. Однако наблюдается асимметрия у всех активов.
+
+
+Построим график распределения по квантилям.
+```{r}
+qqnorm(coredata(df$oil),main = "Oil")
+qqline(coredata(df$oil))
+qqnorm(coredata(df$wheat),main = "wheat")
+qqline(coredata(df$oil))
+qqnorm(coredata(df$gold),main = "Gold")
+qqline(coredata(df$gold))
+qqnorm(coredata(df$copper),main = "Copper")
+qqline(coredata(df$copper))
+```
+
+На графиках видно что с 1 по 3 квантиль значени ложаться в значения которые заданные нормальным законом распределения. Самое большое число значений которые соответствуют нормальному распределению у меди(copper). У зерна минимум точек лежи на прямой заданной нормальным распределением
+
+В виду низкой доходности меди и золота, а также сезонности спроса на зерно мы расмотрим Var для нефти(oil)
+
+## 4.Расчет и тестирование показателя VAR нефти(oil)
+
+Расчет параметрического VAR нормального распределения 
+ 
+```{r}
+p<-.99
+p<-(1-p)
+sigma<-sd(df$oil)
+mu<-mean(df$oil)
+z<-mu+sigma*qnorm(p)
+z
+```
+с вероятностью 1% потери могут составить 2,8% и более
+
+
+Сравним этот исторический Var с нефтью
+```{r,message=FALSE,warning=FALSE}
+dir<-"D://GH//VAR//"
+brn<-read.csv(paste(dir,'ICE.BRN.csv',sep=''),stringsAsFactors = FALSE)
+brn_l<-diff(log(brn$X.CLOSE.))
+mub<-mean(brn_l)
+sdb<-sd(brn_l)
+zb<-mub+sdb*qnorm(p)
+zb
+```
+с вероятностью 1% потери могут составить 4% и более
+
+Как видно, у нефти как у чистого актива потери больше ввиду более длиного временного ряда. Поэтому при использовании фьючерса нужно учитывать что потери с тойже верояностью могут быть более чем 2,8%
+s
+
+Расчет параметрического VAR нормального распределения для различных перидов владения активом (square root rule)
+
+```{r}
+p<-.99
+p<-(1-p)
+period<-10
+sigma<-sd(df$oil)
+mu<-mean(df$oil)
+x<-mu*period+sigma*qnorm(p)*sqrt(period)
+x
+```
+С вероятность 1% за десять дней потери могут составить 7,3% и более
+
+Расчитаем этот показатель для нефти
+```{r}
+xb<-mub*period+sdb*qnorm(p)*sqrt(period)
+xb
+```
+для нефти потери при вероятности 1% составляют 12,6%
+```{r}
+zb/z
+xb/x
+```
+Видно, что при увеличении срока разность между ожидаемыми потерями у фьючерса и актива увеличиваются.
+
+
+Загружаем функцию, считающую VAR разными способами
+
+```{r}
+setwd(dir = dir)
+source(paste(getwd(),'/','Var_calculation.R',sep=''))
+```
+
+Устанавливаем значение скользящего окна в днях
+
+```{r}
+window_estimation<-10
+```
+
+Устанавливаем значение доверительной вероятности 
+
+```{r}
+p<-.95
+p<-(1-p)
+```
+
+Вектор скользящих значений однодневного параметрического VAR
+
+```{r}
+VaR_vector_param<-(lag(rollapply(df$oil,width=window_estimation,Var_calculation,normal=TRUE, p=p,align='right',by.column = FALSE),k=-1))
+```
+
+Вектор скользящих значений однодневного исторического VAR
+
+```{r}
+VaR_vector_hist<-lag((rollapply(df$oil,width=window_estimation,quantile, p, align='right',by.column = FALSE)),k=-1)
+```
+
+Тестирование VAR (тесты Купиеца и Кристоферссона)
+
+Параметрический VAR
+
+```{r}
+VaRTest(p,actual =coredata(df$oil[index(VaR_vector_param),]),VaR = coredata(VaR_vector_param) )
+```
+
+Исторический VAR
+
+```{r}
+VaRTest(p,actual =coredata(df$oil[index(VaR_vector_hist),]),VaR = coredata(VaR_vector_hist) )
+```
+
+Создадим вспомогательный массив для графической визуализации бэк-тестирования
+
+```{r}
+n_df<-as.data.frame(merge(df$oil[index(VaR_vector_param),],VaR_vector_param))
+colnames(n_df)<-c('Oil','VAR')
+n_df[,'Date']<-index(VaR_vector_param)
+n_df<-melt(n_df,id='Date')
+```
+
+
+```{r}
+ggplot(data=n_df,aes(x=Date,y=value,color=variable))+geom_line()+xlab('')+ylab(' ')+ggtitle('VAR exceedances backtesting')
+```
+На графике видно, как изменяется 10и дневная средня скользящая в зависимости от поведения актива
+
+## 5.Расчет показателя ES 
+
+Для целей данного задания возьмем сокращенный вариант исходной совокупности. В качестве примера ограничимся расчетом ES для рассматриваемого периода времени.
+
+```{r}
+sigma<-sd(df$oil[index(df$oil)>'2010-01-01',  ])
+```
+
+ES нормальный закон
+
+```{r}
+ES_normal<--(dnorm(qnorm(p))/p)*sigma
+ES_normal
+```
+Среднии потери вслуче когда значение фьючерса выйдет за пределы 5% составляет 2,7%
+
+ES распределение Стьюдента
+
+```{r}
+nu<-5
+ES_student<--sqrt(nu/(nu-2))*(dstd(qstd(p,nu=nu))/p)*((nu-2)+as.integer(qstd(p,nu=nu))^2/(nu-1))*sigma
+ES_student
+```
+При учете степеней свободы потери составят 9,1%
+
+
+ES исторический 
+
+```{r}
+ES_hist<-mean(coredata(df$oil[df$oil<quantile(df$oil,0.05),]))
+ES_hist
+```
+Историческое значение потерь составляет 2,2%
+
+## 6.Выводы
+
+Распределение фьючерса похожен на нормальное распределение однако в распределении наблюдается незначительная асимметрия, эксцес и тяжелые хвосты.
+При расчете Value at risk(Var) для фьючерсов необходимо учитывать, что они являются производныими финансовыми инструментами и их значение риска зависят от риска актива лежашего в основе и при увеличении срока расчета появляется сильная разность между расчетными значениями потерь у фьючерса и исходного актива. 
