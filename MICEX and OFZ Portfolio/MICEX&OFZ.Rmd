@@ -1,0 +1,465 @@
+---
+title: "Анализ портфеля из индекса ММВБ и одногодичными ОФЗ"
+author: "Андрюничев Валера."
+date: '6 февраля 2019 г '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Установка рабочей дериктории:
+```{r}
+setwd('D:/GH/Share and bonds')
+```
+
+Загрузка библиотек:
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(reshape2)
+library(xts)
+library(ggthemes)
+library(formattable)
+```
+
+Загрузка и обработка данных:
+```{r}
+moex <- read.csv('Прошлые данные - Индекс МосБиржи.csv', encoding="UTF-8")
+moex <- data.frame('Year' = moex$X.U.FEFF.Дата, 'Price' = moex$Изм...)
+moex <- tidyr::separate(data = moex, col = Year, c('Month', 'Year'))
+moex <- moex[,-1]
+bond <- read.csv('Прошлые данные доходности облигаций Россия годовые.csv', encoding="UTF-8")
+bond <- data.frame('Year' = bond$X.U.FEFF.Дата, 'Incom' = bond$Цена)
+bond <- tidyr::separate(data = bond, col = Year,c('Month', 'Year'))
+bond <- bond[,-1]
+bond <- bond[rev(rownames(bond)),]
+
+data <- data.frame('Year' = moex$Year, 'MOEX' = moex$Price, 'Bond' = bond$Incom)
+data$MOEX <- gsub(pattern = '%', '', data$MOEX)
+data$MOEX <- gsub(pattern = ',', '.', data$MOEX)
+data$Bond <- gsub(pattern = ',', '.', data$Bond)
+data$MOEX <- as.numeric(data$MOEX);class(data$MOEX)
+data$Bond <- as.numeric(data$Bond);class(data$Bond)
+data$Bond <- data$Bond / 12
+head(data)
+```
+Построим графи к сравнения доходности индекса акций и облигаций:
+```{r}
+par(mar=c(5, 4, 4, 6) + 0.1)
+plot(data$MOEX, type = 'l', col = 'red', axes = FALSE, 
+     main = 'Сравнение доходности индекса ММВБ\n и однолетних облигаций', xlab = "", ylab = "")
+axis(2, ylim = c(-30, 30), col = "red", col.axis = 'red', las = 1)
+mtext("Доходность ММВБ, %", col = 'red', side = 2, line = 2.5)
+par(new = TRUE)
+plot(data$Bond, type = 'l', col = 'blue', axes = FALSE, xlab="", ylab="")
+axis(4, ylim = c(0, 3), col = "blue", col.axis = "blue", las = 1)
+mtext("Доходность Облигаций, %", side = 4, col = "blue", line = 2.5)
+axis(1, pretty(index(data)))
+mtext("Месяц", side = 1, col = "black", line = 2)
+```
+
+По графику видно, что индекс показывает значительно большую доходность и волатильность в сравнении с облигациями
+
+Посмотрим на коэффициенты прироста капитала:
+```{r}
+data$Moex_add <- 1
+data$Bond_add <- 1
+
+N <- nrow(data)
+for (i in 2:N) {
+  data$Moex_add[i] = data$Moex_add[i-1] *(1 + (data$MOEX[i] / 100))
+  data$Bond_add[i] = data$Bond_add[i-1] *(1 + (data$Bond[i] / 100))
+}
+
+plot(data$Moex_add, type = 'l', col = 'red', 
+     main = 'Сравнение увеличения вложенных\n средств от типа актива', xlab = 'Месяц', 
+     ylab = 'Прирост капитала, разы')
+lines(data$Bond_add, col = 'blue')
+legend("topleft", c("ММВБ","Облигации"), cex=.8, col = c("red", "blue"), lty = c(1, 1))
+```
+
+Индекс показывает больший прирост капитала чем облигации.
+
+Создадим портфель из 80% Индекса Акций и 20% индекса облигаций:
+```{r}
+portfolio <- 100000  # Сумма портфеля
+Risk <- .8 # Доля рисковой части
+No_Risk <- 1 - Risk # Доля безрисковой
+portfolio_a <- portfolio * Risk
+portfolio_p <- portfolio * No_Risk
+data$P_M <- data$Moex_add * portfolio_a 
+data$P_B <- data$Bond_add * portfolio_p 
+data$Sum <- data$P_M + data$P_B
+data$MoexWeight <- data$P_M / data$Sum
+data$BondWeight <- data$P_B / data$Sum
+data$vanilaMoex <- data$Moex_add * portfolio
+data$vanilaBond <- data$Bond_add * portfolio
+head(data)
+```
+
+Посмотрим на состав портфеля по годам:
+```{r}
+temp <- data[,c(1,9,10)];colnames(temp) <- c('Year', 'Moex', 'Bond')
+temp <- temp[seq(1, nrow(temp), 12), ]
+temp <- temp[,c(1,3,2)]
+portfel <- melt(temp)
+head(portfel)
+rm(a,b,temp)
+ggplot(portfel, aes(x = portfel$Year, y = portfel$value, fill = portfel$variable)) + 
+  geom_bar(stat = "identity", colour = 'black')+
+  xlab("Годы")+
+  ylab("Состав портфеля, доли")+
+  scale_fill_discrete(name='Вид Активов',labels=c('Облигации', 'Акции'))+
+  ggtitle(label = 'Состав портфеля из акций\nи облигаций по годам')
+```
+
+Посмотрим на результат стратегии:
+```{r}
+result <- data[,c(8,11,12)]
+colnames(result) <- c('Portfolio', 'MOEX', 'Bond')
+ggplot(result, aes(x = index(result)))+ 
+  geom_line(aes(y = result$Portfolio, colour = 'Portfolio'))+
+  geom_line(aes(y = result$MOEX, colour = 'MOEX'))+
+  geom_line(aes(y = result$Bond, colour = 'Bond'))+
+  xlab("Месяц")+
+  ylab("Стоимость портфеля, руб")+
+  scale_colour_manual("", 
+    breaks = c('Portfolio', 'MOEX', 'Bond'),values = c("red", "green", "blue"), 
+    labels=c('Портфель', 'Акции', 'Облигации'))+
+  scale_y_continuous(breaks=seq(0, 500000, 50000))+
+  theme_classic()
+
+```
+
+На выбранном промежутке стоимость портфеля состоящего только из акции в конечном итоге покажет болшую доходность чем портфель.
+
+###Построим стратеги с использование ребалансировок
+
+Рассчитаем стратегию с ребалансировкой раз в год:
+```{r}
+df <- data[,-c(4:5)]
+df$Signal <- 0
+N <- nrow(df)
+for (i in 2:N) {df$Signal[i] = ifelse(df$Year[i] == df$Year[i-1], 0, 1)}
+df$MOEX <- df$MOEX / 100
+df$Bond <- df$Bond / 100
+for (i in 2:N){
+  if(df$Signal[i] == 1){
+    df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+    df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+    df$P_M[i] = df$Sum[i] * Risk
+    df$P_B[i] = df$Sum[i] * No_Risk
+    df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+    df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+  } else {
+    df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+    df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+    df$Sum[i] = df$P_M[i] + df$P_B[i]
+    df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+    df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+  }
+}
+```
+
+Посмотрим на результат
+```{r}
+result_r <- data.frame('Reb'= df[,6])
+result_r$Vanila <- result$Portfolio
+result_r$diff <- result_r$Reb - result_r$Vanila
+
+par(mar=c(6, 5.2, 4, 6) + 0.1)
+plot(result_r$Reb, type = 'l', col = 'red', axes = FALSE, 
+     main = 'Результат со стратегией\nребалансировки портфеля раз в год', xlab = "", ylab = "")
+lines(result_r$Vanila, col = 'green')
+axis(2, ylim = c(0, 500000), col = "black", col.axis = 'black', las = 1)
+mtext("Стоимость портфеля, руб", side = 2, col = "black", line = 4.2)
+par(new = TRUE)
+plot(result_r$diff, type = 'l', col = 'blue', axes = FALSE, xlab="", ylab="")
+axis(4, ylim = c(-16000, 16000), col = "blue", col.axis = "blue", las = 1)
+mtext("Разница с простым\n удержанием, руб", side = 4, col = "blue", line = 4.5)
+axis(1, pretty(index(result_r)))
+mtext("Месяц", side = 1, col = "black", line = 2)
+legend(x = -10, y = -13400, c("Ребаланс","Портфель"), cex=.8, col = c("red", "green"), 
+       lty = c(1, 1), box.lty=0,inset=c(0,1), xpd=TRUE, horiz=TRUE)
+```
+
+Разница между портфелями доходит до 5% в период кризиса.
+
+Рассчитаем стратегию с ребалансировкой раз в квартал:
+```{r}
+df <- data[,-c(4:5)]
+df$Signal <- 0
+df[seq(1, nrow(df), 4), 11] <- 1
+df$MOEX <- df$MOEX / 100
+df$Bond <- df$Bond / 100
+for (i in 2:N){
+  if(df$Signal[i] == 1){
+    df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+    df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+    df$P_M[i] = df$Sum[i] * Risk
+    df$P_B[i] = df$Sum[i] * No_Risk
+    df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+    df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+  } else {
+    df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+    df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+    df$Sum[i] = df$P_M[i] + df$P_B[i]
+    df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+    df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+  }
+}
+```
+
+Посмотрим результат:
+```{r}
+result_r <- data.frame('Reb'= df[,6])
+result_r$Vanila <- result$Portfolio
+result_r$diff <- result_r$Reb - result_r$Vanila
+
+par(mar=c(6, 5.2, 4, 6) + 0.1)
+plot(result_r$Reb, type = 'l', col = 'red', axes = FALSE, 
+     main = 'Результат со стратегией\nребалансировки портфеля раз в квартал', xlab = "", ylab = "")
+lines(result_r$Vanila, col = 'green')
+axis(2, ylim = c(0, 500000), col = "black", col.axis = 'black', las = 1)
+mtext("Стоимость портфеля, руб", side = 2, col = "black", line = 4.2)
+par(new = TRUE)
+plot(result_r$diff, type = 'l', col = 'blue', axes = FALSE, xlab="", ylab="")
+axis(4, ylim = c(-16000, 16000), col = "blue", col.axis = "blue", las = 1)
+mtext("Разница с простым\n удержанием, руб", side = 4, col = "blue", line = 4.5)
+axis(1, pretty(index(result_r)))
+mtext("Месяц", side = 1, col = "black", line = 2)
+legend(x = -10, y = -9400, c("Ребаланс","Портфель"), cex=.8, col = c("red", "green"), 
+       lty = c(1, 1), box.lty=0,inset=c(0,1), xpd=TRUE, horiz=TRUE)
+```
+
+Результат стал ниже, Максимальна разница упала до 3%.
+
+Рассчитаем стратегию с использованием ребалансировки раз в месяц:
+```{r}
+df <- data[,-c(4:5)]
+df$MOEX <- df$MOEX / 100
+df$Bond <- df$Bond / 100
+for (i in 2:N){
+  df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+  df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+  df$Sum[i] = df$P_M[i] + df$P_B[i]
+  df$P_M[i] = df$Sum[i] * Risk
+  df$P_B[i] = df$Sum[i] * No_Risk
+  df$Sum[i] = df$P_M[i] + df$P_B[i]
+  df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+  df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+}
+```
+
+Посмотрим на результат:
+```{r}
+result_r <- data.frame('Reb'= df[,6])
+result_r$Vanila <- result$Portfolio
+result_r$diff <- result_r$Reb - result_r$Vanila
+
+par(mar=c(6, 5.2, 4, 6) + 0.1)
+plot(result_r$Reb, type = 'l', col = 'red', axes = FALSE, 
+     main = 'Результат со стратегией\nребалансировки портфеля раз в месяц', xlab = "", ylab = "")
+lines(result_r$Vanila, col = 'green')
+axis(2, ylim = c(0, 500000), col = "black", col.axis = 'black', las = 1)
+mtext("Стоимость портфеля, руб", side = 2, col = "black", line = 4.2)
+par(new = TRUE)
+plot(result_r$diff, type = 'l', col = 'blue', axes = FALSE, xlab="", ylab="")
+axis(4, ylim = c(-40000, 40000), col = "blue", col.axis = "blue", las = 1)
+mtext("Разница с простым\n удержанием, руб", side = 4, col = "blue", line = 4.5)
+axis(1, pretty(index(result_r)))
+mtext("Месяц", side = 1, col = "black", line = 2)
+legend(x = -10, y = -24000, c("Ребаланс","Портфель"), cex=.8, col = c("red", "green"), 
+       lty = c(1, 1), box.lty=0,inset=c(0,1), xpd=TRUE, horiz=TRUE)
+```
+
+Результат портфеля стал значительно лучше и разница поднялась до 10%.
+
+
+Посмотрим как ведет себя портфель в зависимости от доли рисковой части портфеля в течении каждой пятилетки с 2004 по 2015 годы.
+
+Расчитаем портфели:
+```{r}
+N <- nrow(data)
+for (i in 2:N) {
+  data$Moex_add[i] = data$Moex_add[i-1] *(1 + (data$MOEX[i] / 100))
+  data$Bond_add[i] = data$Bond_add[i-1] *(1 + (data$Bond[i] / 100))
+}
+
+portfolio <- 100000
+
+this <- 1
+another <- 1 - this
+col_num <- 1
+temp <- data
+point <- 1
+numer <- 60
+new_name <- 1
+data_name <- character()
+
+while (numer < nrow(temp)) {
+  data <- temp[c(point:numer),]
+  data$Moex_add[1] <- 1
+  data$Bond_add[1] <- 1
+  N <- nrow(data)
+  for (i in 2:N) {
+    data$Moex_add[i] = data$Moex_add[i-1] *(1 + (data$MOEX[i] / 100))
+    data$Bond_add[i] = data$Bond_add[i-1] *(1 + (data$Bond[i] / 100))
+  }
+  data$P_M <- 0
+  data$P_B <- 0
+  
+  this <- 1
+  another <- 1 - this
+  col_num <- 1
+  output <- data.frame(num = rep(NA, 21),
+                       moexW = 0, 
+                       BondW = 0, 
+                       result_vanila = 0, 
+                       result_year = 0, 
+                       result_quarter = 0,
+                       result_month = 0)
+  
+  output <- output[,-1]
+  while (another < 1.05) {
+    Risk <- this
+    No_Risk <- another
+    portfolio_a <- portfolio * Risk
+    portfolio_p <- portfolio * No_Risk
+    # Стратегия удержание
+    data$P_M <- data$Moex_add * portfolio_a 
+    data$P_B <- data$Bond_add * portfolio_p 
+    data$Sum <- data$P_M + data$P_B
+    data$MoexWeight <- data$P_M / data$Sum
+    data$BondWeight <- data$P_B / data$Sum
+    output$moexW[col_num] = percent(Risk)
+    output$BondW[col_num] = percent(No_Risk)
+    output$result_vanila[col_num] = data$Sum[nrow(data)]
+    
+    ## Стратегия с использованием ребалансировки раз в год
+    df <- data[,-c(4:5)]
+    df$Signal <- 0
+    N <- nrow(df)
+    for (i in 2:N) {df$Signal[i] = ifelse(df$Year[i] == df$Year[i-1], 0, 1)}
+    df$MOEX <- df$MOEX / 100
+    df$Bond <- df$Bond / 100
+    for (i in 2:N){
+      if(df$Signal[i] == 1){
+        df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+        df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+        df$P_M[i] = df$Sum[i] * Risk
+        df$P_B[i] = df$Sum[i] * No_Risk
+        df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+        df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+      } else {
+        df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+        df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+        df$Sum[i] = df$P_M[i] + df$P_B[i]
+        df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+        df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+      }
+    }
+    output$result_year[col_num] <- df$Sum[nrow(df)]
+    rm(df)
+    
+    ## Стратегия с использованием ребалансировки раз в квартал
+    df <- data[,-c(4:5)]
+    df$Signal <- 0
+    df[seq(1, nrow(df), 4), 9] <- 1
+    df$MOEX <- df$MOEX / 100
+    df$Bond <- df$Bond / 100
+    for (i in 2:N){
+      if(df$Signal[i] == 1){
+        df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+        df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+        df$P_M[i] = df$Sum[i] * Risk
+        df$P_B[i] = df$Sum[i] * No_Risk
+        df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+        df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+      } else {
+        df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+        df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+        df$Sum[i] = df$P_M[i] + df$P_B[i]
+        df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+        df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+      }
+    }
+    output$result_quarter[col_num] <- df$Sum[nrow(df)]
+    rm(df)
+    
+    ## Стратегия с использованием ребалансировки раз в месяц
+    df <- data[,-c(4:5)]
+    df$MOEX <- df$MOEX / 100
+    df$Bond <- df$Bond / 100
+    for (i in 2:N){
+      df$P_M[i] = df$P_M[i-1] * (1 + df$MOEX[i])
+      df$P_B[i] = df$P_B[i-1] * (1 + df$Bond[i])
+      df$Sum[i] = df$P_M[i] + df$P_B[i]
+      df$P_M[i] = df$Sum[i] * Risk
+      df$P_B[i] = df$Sum[i] * No_Risk
+      df$Sum[i] = df$P_M[i] + df$P_B[i]
+      df$MoexWeight[i] = df$P_M[i] / df$Sum[i]
+      df$BondWeight[i] = df$P_B[i] / df$Sum[i]
+    }
+    output$result_month[col_num] <- df$Sum[nrow(df)]
+    col_num <- col_num + 1
+    this <- this - .05 
+    another <- 1 - this
+  }
+  output$moexW <- round(output$moexW, digits = 2)
+  data_name <- c(data_name, paste('data_massiv', '_', new_name, sep = ''))
+  assign(paste('data_massiv', '_', new_name, sep = ''), output)
+  rm(output, df)
+  new_name <- new_name + 1
+  point <- point + 12
+  numer <- numer + 12
+  
+}
+
+```
+
+Построим графики этих портфелей:
+```{r}
+start <- 2004
+finish <- start + 5
+plots <- data_massiv_1
+plots$Simbol <- paste(start, '-', finish, sep = '')
+
+a <- 1
+b <- nrow(plots)
+
+for(i in data_name[-1]){
+  y <- get(i)
+  start <- start + 1
+  finish <- start + 5
+  a = a + 21
+  b = b + 21
+  plots[a:b,] = y[1:21,]
+  plots[a:b,7] = paste(start, '-', finish, sep = '')
+  plots[a:b,8] = start
+}
+
+library(gganimate)
+theme_set(theme_bw())
+pl <- ggplot(plots, aes(x = plots$moexW, frame = plots$Simbol))
+pl <- pl + geom_line(aes(y = plots$result_vanila, colour = 'vanila'))
+pl <- pl + geom_line(aes(y = plots$result_year, colour = 'year'))
+pl <- pl + geom_line(aes(y = plots$result_quarter, colour = 'quarter'))
+pl <- pl + geom_line(aes(y = plots$result_month, colour = 'month'))
+pl <- pl + xlab("Доля рисковой часли портфеля")
+pl <- pl + ylab("Стоимость портфеля, руб")
+pl <- pl + labs(title = 'Стоимость портфеля в \nзависимоти от доли рисковой части и \nпериода ребалансировки')
+pl <- pl + scale_colour_manual("",
+                      breaks = c('vanila', 'year', 'quarter', 'month'),
+                      values = c("green","red", "black", "blue"),
+                      labels=c('Портфель',
+                               'Ребалансировка раз в год',
+                               'Ребалансировка раз в квартал',
+                               'Ребалансировка раз в месяц'))
+
+gganimate::gg_animate(pl, interval = 1)
+```
+
+Графики показывают сильный разброс результата.
+Для выбора ориетировочного портфеля (Benchmark) требуется проанализировать портфели по другим характеристикам.
+
